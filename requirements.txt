@@ -7,3 +7,5 @@ astroquery
 tqdm
 requests
 matplotlib
+setuptools  # provides the distutils shim batman-package needs on Python >=3.12
+batman-package
