@@ -1,0 +1,9 @@
+lightkurve>=2.4
+wotan
+numpy
+pandas
+astropy
+astroquery
+tqdm
+requests
+matplotlib
