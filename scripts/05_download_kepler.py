@@ -41,8 +41,14 @@ def _search_and_download(kic_id, dest_path):
             sr = lk.search_lightcurve(f"KIC {kic_id}", author="Kepler", cadence="long")
             if len(sr) == 0:
                 return False, "no_results"
+            # Quarter 00 is a ~10-day commissioning run that sorts first but
+            # yields too few cadences after quality filtering (see
+            # MIN_CADENCES in 06_preprocess_kepler.py); prefer a full quarter
+            # when one is available.
+            missions = list(sr.table["mission"])
+            pick = next((i for i, m in enumerate(missions) if "Quarter 00" not in m), 0)
             with tempfile.TemporaryDirectory() as tmpdir:
-                sr[0].download(download_dir=tmpdir)
+                sr[pick].download(download_dir=tmpdir)
                 fits_files = list(Path(tmpdir).rglob("*.fits"))
                 if not fits_files:
                     return False, "download_no_fits"

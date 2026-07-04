@@ -188,11 +188,9 @@ def null_purity_check(manifest):
         print(f"  TIC {tic_id}: best_period={best_period:.2f}d ratio={ratio:.2f}"
               f"{'  <-- FLAGGED' if flagged else ''}")
 
-    if suspects:
-        pd.DataFrame(suspects).to_csv(SUSPECTS_PATH, index=False)
-        print(f"  {len(suspects)} suspects -> {SUSPECTS_PATH}")
-    else:
-        print("  no suspects flagged")
+    cols = ["tic_id", "best_period_days", "std_binned_over_noise"]
+    pd.DataFrame(suspects, columns=cols).to_csv(SUSPECTS_PATH, index=False)
+    print(f"  {len(suspects)} suspects -> {SUSPECTS_PATH}")
 
 
 # --------------------------------------------------------------- report --
