@@ -42,6 +42,31 @@ flags, then `02` and `03` again — only new targets are downloaded/processed.
 `data/` is git-ignored (light curves total several GB). The bulk dataset is
 hosted on Kaggle Datasets: `<placeholder — Kaggle link TBD>`.
 
+## Samples
+
+`data/samples/` is the one exception to the git-ignore above, and the only
+data this repo actually commits: one small, real, contract-valid `.npz` per
+label (`planet`, `eb`, `blend`, `starspot`, `null`), each ≤500KB, for
+smoke-testing arvyo-pipeline against real data without pulling the full
+corpus. `blend` comes from the real Kepler DR25 centroid-offset false
+positives in `data/kepler/processed/blend/` (see "Kepler DR25 transfer set"
+below) — the TESS `blend` class is synthetic-only, so it's excluded as a
+source here.
+
+Regenerate with:
+
+```
+python scripts/export_samples.py --seed 42
+```
+
+Each label's sample is picked uniformly at random (seeded, reproducible)
+from that label's contract-valid files already under the 500KB budget, so
+the committed sample isn't cherry-picked to look unusually clean. `data/samples/PROVENANCE.md`
+records exactly which source file was used per label, and is regenerated
+alongside the samples — do not hand-edit either. Full training/eval runs
+should still use the manifest and the full corpus (Kaggle or a local
+rebuild), not `data/samples/`.
+
 ---
 
 ## Kepler DR25 transfer set
