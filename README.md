@@ -67,6 +67,28 @@ alongside the samples — do not hand-edit either. Full training/eval runs
 should still use the manifest and the full corpus (Kaggle or a local
 rebuild), not `data/samples/`.
 
+The `blend` row is the one exception to "picked uniformly at random": it's
+pinned via `scripts/export_samples.py --force blend=<path>` to a specific,
+pre-registered target (KIC 4281068 / KOI K07689.01) rather than a random
+draw, because an earlier random pick (KIC 6974867) turned out to sit right
+at the detection floor — TLS recovered SDE ≈ 5.0 against arvyo-pipeline's
+7.0 gate, so the worker's period-search stage short-circuited to
+`no_period` and the fitr model-comparison stage never ran on it. The
+replacement was chosen with `scripts/08_select_blend_sample.py`, which
+filters the DR25 KOI cumulative table for `FALSE POSITIVE`s with the
+centroid-offset flag (`koi_fpflag_co == 1`), an on-target-shaped signal
+(`koi_fpflag_nt == 0`), a short period (0.5-5.0 d, for many events per
+quarter), catalog depth ≥500 ppm, and catalog `koi_model_snr` ≥20, then
+ranks survivors by SNR descending; the results are recorded in
+`data/catalogs/blend_candidates.csv`. On the new target, TLS recovers
+SDE ≈ 18.9 (period within 0.02% of the catalog value) and fitr's 4-model
+comparison runs to a `clear` verdict — though it picks `eb`, not `blend`,
+as the best-fit model (see PROVENANCE and the task report for the full
+before/after numbers). `koi_fpflag_co` reflects a Robovetter centroid-shift
+determination that isn't necessarily recoverable from light-curve shape
+alone, so this mismatch is expected and reported as-is rather than treated
+as a reason to pick a different candidate.
+
 ---
 
 ## Kepler DR25 transfer set

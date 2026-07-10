@@ -93,33 +93,48 @@ def _decimation_factor_for_budget(data: dict, max_bytes: int) -> int:
         factor += 1
 
 
-def export_one(label: str, source_dir: Path, rng: np.random.Generator) -> dict:
+def export_one(label: str, source_dir: Path, rng: np.random.Generator,
+                forced_path: Path | None = None) -> dict:
     if not source_dir.is_dir():
         raise SystemExit(f"STOP: source directory for label {label!r} does not exist: "
                           f"{source_dir}. Not fabricating a sample for a missing class.")
 
+    if forced_path is not None and not forced_path.is_file():
+        raise SystemExit(f"STOP: --force target for label {label!r} not found: {forced_path}")
+
+    # Always run the normal candidate scan and consume the same rng draw,
+    # forced or not, so pinning one label's file can't shift which random
+    # file another (unforced) label ends up with.
     candidates = _contract_valid_files(source_dir)
     if not candidates:
         raise SystemExit(f"STOP: no contract-valid .npz files found for label {label!r} "
                           f"under {source_dir}. Not fabricating a sample for a missing class.")
-
     under_budget = [p for p in candidates if p.stat().st_size <= MAX_BYTES]
+
+    if forced_path is not None:
+        try:
+            load_sample(forced_path)
+        except ContractError as e:
+            raise SystemExit(f"STOP: --force target for label {label!r} failed contract "
+                              f"validation: {forced_path}: {e}")
 
     label_dir = SAMPLES_DIR / label
     label_dir.mkdir(parents=True, exist_ok=True)
 
     if under_budget:
-        chosen = under_budget[rng.integers(len(under_budget))]
-        with np.load(chosen, allow_pickle=True) as npz:
-            data = {k: npz[k] for k in npz.files}
-        factor = 1
-        original_points = int(np.asarray(data["time"]).size)
+        picked = under_budget[rng.integers(len(under_budget))]
+        chosen = forced_path if forced_path is not None else picked
     else:
-        # Fallback: nothing fits as-is: decimate the smallest candidate.
-        chosen = min(candidates, key=lambda p: p.stat().st_size)
-        with np.load(chosen, allow_pickle=True) as npz:
-            data = {k: npz[k] for k in npz.files}
-        original_points = int(np.asarray(data["time"]).size)
+        chosen = forced_path if forced_path is not None else min(candidates, key=lambda p: p.stat().st_size)
+
+    with np.load(chosen, allow_pickle=True) as npz:
+        data = {k: npz[k] for k in npz.files}
+    original_points = int(np.asarray(data["time"]).size)
+
+    if chosen.stat().st_size <= MAX_BYTES:
+        factor = 1
+    else:
+        # Nothing fits as-is (or the forced target is oversized): decimate it.
         factor = _decimation_factor_for_budget(data, MAX_BYTES)
         if factor > 1:
             data = _decimate(data, factor)
@@ -140,6 +155,7 @@ def export_one(label: str, source_dir: Path, rng: np.random.Generator) -> dict:
         "final_bytes": dest_path.stat().st_size,
         "n_candidates_under_budget": len(under_budget),
         "n_candidates_total": len(candidates),
+        "selection": "forced" if forced_path is not None else "random",
     }
 
 
@@ -152,20 +168,28 @@ def write_provenance(entries: list[dict], seed: int) -> None:
         "(with the same --seed) to reproduce them exactly, or with a "
         "different --seed to pick a different real target per class.",
         "",
-        "| label | dest | source | original pts | decimation | final pts | final size |",
-        "|---|---|---|---:|---:|---:|---:|",
+        "| label | dest | source | original pts | decimation | final pts | final size | selection |",
+        "|---|---|---|---:|---:|---:|---:|---|",
     ]
     for e in entries:
         lines.append(
             f"| {e['label']} | `{e['dest_path']}` | `{e['source_path']}` | "
             f"{e['original_points']} | {e['decimation_factor']}x | "
-            f"{e['final_points']} | {e['final_bytes'] / 1024:.1f} KB |"
+            f"{e['final_points']} | {e['final_bytes'] / 1024:.1f} KB | {e['selection']} |"
         )
     lines.append("")
     lines.append(
         "All rows pass `arvyo.contract.load_sample()` from the sibling "
         "arvyo-pipeline repo unchanged (validated at export time)."
     )
+    if any(e["selection"] == "forced" for e in entries):
+        lines.append("")
+        lines.append(
+            "Rows marked `forced` were pinned via `--force label=path` to a "
+            "specific pre-registered target instead of the usual random pick "
+            "among under-budget candidates (see `data/catalogs/blend_candidates.csv` "
+            "and `scripts/08_select_blend_sample.py` for the blend row's selection criteria)."
+        )
     lines.append("")
     PROVENANCE_PATH.write_text("\n".join(lines))
 
@@ -173,14 +197,33 @@ def write_provenance(entries: list[dict], seed: int) -> None:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--force", action="append", default=[], metavar="LABEL=PATH",
+        help="Pin a label to a specific source .npz instead of the usual "
+             "random pick (repeatable). Path is resolved relative to the "
+             "repo root if not absolute. Still validated against the "
+             "contract and the 500KB budget like any other candidate.",
+    )
     args = parser.parse_args(argv)
+
+    forced = {}
+    for item in args.force:
+        if "=" not in item:
+            raise SystemExit(f"--force expects LABEL=PATH, got: {item!r}")
+        label, path_str = item.split("=", 1)
+        if label not in SOURCES:
+            raise SystemExit(f"--force label {label!r} is not one of {list(SOURCES)}")
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = ROOT / path
+        forced[label] = path
 
     rng = np.random.default_rng(args.seed)
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
 
     entries = []
     for label, source_dir in SOURCES.items():
-        entry = export_one(label, source_dir, rng)
+        entry = export_one(label, source_dir, rng, forced_path=forced.get(label))
         entries.append(entry)
         print(f"{label:10s} <- {entry['source_path']} "
               f"({entry['original_points']} pts, decimation={entry['decimation_factor']}x) "
