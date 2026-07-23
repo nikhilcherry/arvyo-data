@@ -28,6 +28,21 @@ SIGMA_UPPER = 5.0
 MIN_CADENCES = 500  # lowered from TESS's floor: Kepler LC quarters are shorter
 
 
+def in_transit_mask(time, period_days, epoch_btjd, duration_hours):
+    """Boolean in-transit mask for a known ephemeris, or None if the
+    ephemeris isn't fully known. Same recipe as 03_preprocess.py -- see its
+    docstring for why an unmasked biweight fit distorts the transit depth.
+    """
+    if not (
+        np.isfinite(period_days) and np.isfinite(epoch_btjd) and np.isfinite(duration_hours)
+        and period_days > 0 and duration_hours > 0
+    ):
+        return None
+    half_dur_days = duration_hours / 24.0 / 2.0
+    phase = np.mod(time - epoch_btjd + period_days / 2.0, period_days) - period_days / 2.0
+    return np.abs(phase) < half_dur_days
+
+
 def get_crowdsap(fits_path):
     try:
         with fits.open(fits_path) as hdul:
@@ -81,9 +96,15 @@ def preprocess_one(kic_id, label, fits_path, meta_row):
     median_raw = np.nanmedian(flux)
     flux_raw_norm = flux / median_raw
 
+    mask = in_transit_mask(
+        time,
+        meta_row.get("period_days", np.nan),
+        meta_row.get("epoch_btjd", np.nan),
+        meta_row.get("duration_hours", np.nan),
+    )
     flattened_flux, trend = wotan.flatten(
         time, flux, method="biweight", window_length=WINDOW_LENGTH_DAYS,
-        return_trend=True,
+        return_trend=True, mask=mask,
     )
     flux_err_detrended = flux_err / trend
 

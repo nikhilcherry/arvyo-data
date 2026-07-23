@@ -217,7 +217,8 @@ vector (free ground truth for later injection-recovery tests of TLS/SBI):
   synthetics.
 
 Augmented curves are re-detrended with the exact same wotan settings as
-`03_preprocess.py` (biweight, 0.5 d window) so the augmented and real
+`03_preprocess.py` (biweight, 0.5 d window, in-transit points masked out
+of the fit using the injected ephemeris) so the augmented and real
 distributions don't diverge on preprocessing artifacts.
 
 ```

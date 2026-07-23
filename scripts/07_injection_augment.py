@@ -251,17 +251,60 @@ def generate_blend_signal(time, rng, eb_donors, max_attempts=50):
     return diluted, meta
 
 
+def _estimate_duration_days(meta):
+    """Best-available transit duration for masking the redetrend fit, given
+    whichever signal generator produced ``meta``. batman-generated signals
+    (planet, eb_batman) carry the physical params to compute it exactly;
+    eb_resampled has no such model, so this falls back to the same
+    period*0.05 stand-in count_full_transits already uses for that
+    generator. Returns None if not even a period is available.
+    """
+    period = meta.get("period_days")
+    if period is None or not np.isfinite(period) or period <= 0:
+        return None
+    kind = meta.get("kind")
+    rp = meta.get("rp") or meta.get("rp_primary")
+    a_over_rs = meta.get("a_over_rs")
+    b = meta.get("b")
+    if kind in ("planet", "eb_batman") and rp is not None and a_over_rs is not None and b is not None:
+        return transit_duration_days(period, a_over_rs, rp, b)
+    return period * 0.05
+
+
+def _injection_mask(time, meta):
+    """In-transit mask for the redetrend fit, or None if the ephemeris
+    isn't known. See in_transit_mask() in 03_preprocess.py -- this is the
+    same fix, needed here too since inject_and_redetrend() re-runs the
+    identical unmasked wotan.flatten() call on the freshly-injected signal."""
+    if meta is None:
+        return None
+    base = meta.get("base_signal") if meta.get("kind") == "blend" else meta
+    if not base:
+        return None
+    period = base.get("period_days")
+    t0 = base.get("t0")
+    duration = _estimate_duration_days(base)
+    if period is None or t0 is None or duration is None:
+        return None
+    if not (np.isfinite(period) and np.isfinite(t0) and np.isfinite(duration) and period > 0 and duration > 0):
+        return None
+    half_dur = duration / 2.0
+    phase = np.mod(time - t0 + period / 2.0, period) - period / 2.0
+    return np.abs(phase) < half_dur
+
+
 # --------------------------------------------------------- inject + redetrend --
-def inject_and_redetrend(donor, signal):
+def inject_and_redetrend(donor, signal, meta=None):
     time = np.asarray(donor["time"], dtype=np.float64)
     raw = donor["flux_raw"] if "flux_raw" in donor else donor["flux"]
     raw = np.asarray(raw, dtype=np.float64)
     flux_err = np.asarray(donor["flux_err"], dtype=np.float64)
 
     injected_raw = raw * signal
+    mask = _injection_mask(time, meta)
     flattened, trend = wotan.flatten(
         time, injected_raw, method="biweight", window_length=WINDOW_LENGTH_DAYS,
-        return_trend=True,
+        return_trend=True, mask=mask,
     )
     flux_err_detrended = flux_err / trend
     median_final = np.nanmedian(flattened)
@@ -286,7 +329,7 @@ def build_one(label, donors_null, donors_eb, rng):
     if signal is None:
         return None
 
-    time_out, flux_out, flux_err_out = inject_and_redetrend(donor, signal)
+    time_out, flux_out, flux_err_out = inject_and_redetrend(donor, signal, meta)
 
     if label == "blend":
         crowdsap = meta["crowdsap"]
